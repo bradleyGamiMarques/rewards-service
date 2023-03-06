@@ -3,11 +3,21 @@ service: rewards-service
 frameworkVersion: "3"
 
 custom:
+  serverless-offline:
+    host: 0.0.0.0
   tableName: "users-table-${sls:stage}"
+  dynamodb:
+    start:
+      port: 8000
+      migrate: true
+    stages:
+      - dev
 
 provider:
   name: aws
   runtime: nodejs18.x
+  # TODO1 Create separate custom roles for each function.
+  # Current role is too permissive.
   iam:
     role:
       statements:
@@ -20,26 +30,50 @@ provider:
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
           Resource:
-            - Fn::GetAtt: [UsersTable, Arn]
+            - Fn::GetAtt: [RewardsTable, Arn]
   environment:
-    USERS_TABLE: ${self:custom.tableName}
+    REWARDS_TABLE: ${self:custom.tableName}
 
+  # TODO1 Set up CORS policy
+  # TODO1 Set up authorizer to protect endpoints.
+  # TODO1 Set up read and write capacity units.
 functions:
-  api:
-    handler: index.handler
+  createReward:
+    handler: lambdas/rewards/createReward.createReward
     events:
-      - httpApi: "*"
+      - httpApi: POST /createReward
+  queryNonExpiredRewards:
+    handler: lambdas/rewards/queryNonExpiredRewards.queryNonExpiredRewards
+    events:
+      - httpApi: GET /queryNonExpiredRewards/{phoneNumber}
 
 resources:
   Resources:
-    UsersTable:
+    RewardsTable:
       Type: AWS::DynamoDB::Table
       Properties:
-        AttributeDefinitions:
-          - AttributeName: userId
-            AttributeType: S
         KeySchema:
-          - AttributeName: userId
+          - AttributeName: accountId
             KeyType: HASH
+          - AttributeName: expiresAt
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: accountId
+            AttributeType: S
+          - AttributeName: expiresAt
+            AttributeType: N
+          - AttributeName: phoneNumber
+            AttributeType: S
+        GlobalSecondaryIndexes:
+          - IndexName: NonExpiredRewardsIndex
+            KeySchema:
+              - AttributeName: phoneNumber
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
         BillingMode: PAY_PER_REQUEST
         TableName: ${self:custom.tableName}
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
